@@ -1,0 +1,316 @@
+<html>
+<head>
+<script src="https://d3js.org/d3.v5.js"></script>
+<script src="https://unpkg.com/vue@latest"></script>
+<script src="https://unpkg.com/vue-select@latest"></script>
+<style>
+.tooltip{
+	position: absolute;
+	background: #dddddd;
+	border-radius: 7px;
+	font-family: Arial, Sans;
+	text-align: center;
+	font-size: 24px;
+	padding: 5px;
+	pointer-events: none;
+	transform: translate(-50%, -100%) translateY(-8px);
+	opacity: 0;
+	max-width: 200px;
+
+}
+
+body{
+	background: #441417;
+	font-family: Arial, Sans;
+}
+
+h2{
+	margin-bottom: 10px;
+}
+h6{
+	margin-top: 0px;
+	text-decoration: underline;
+}
+.v-select	{
+	font-size: 12px;
+	color: black;
+	display: block;
+	width: 320px;
+	height: 30px;
+	max-height: 30px;
+}
+.v-select .dropdown-toggle {
+	background: #fff;
+}
+
+#app{
+	pointer-events:	none;
+}
+.v-select, .v-select *{
+	pointer-events: initial;
+	position: initial;
+	margin-left: auto;
+}
+svg{
+	pointer-events:initial;
+}
+
+
+#info {
+	display: flex;
+	flex-direction: column;
+	position: absolute;
+	font-size: 30px;
+	color: #eeeeee;
+	text-align: left;
+	margin-left:20px;
+}
+
+#info div {
+	position: relative;
+	align-items: center;
+}
+
+#info>div>div {
+	display:flex;
+}
+
+</style>
+
+</head>
+<body>
+
+
+<div id="app">
+	<div id="info">
+		<h2>Wage and Hour Violations</h2>
+		<h6>Department of Labor Compliance Data</h6>
+		<div>
+			<div>
+				<div>View: </div>
+				<v-select v-model="column" :options="column_options" @input="reload"></v-select>
+			</div>
+			<br/>
+			<div>
+				<div>Grouped by: </div>
+				<v-select v-model="group_by" :options="group_options" @input="reload"></v-select>
+			</div>
+			<br/>
+			<div>
+				<div>Screen represents: </div><div style="margin-left:auto">{{ amount }}</div>
+			</div>
+		</div>
+	</div>
+	<div class="tooltip"></div>
+	<svg>
+	</svg>
+</div>
+
+</body>
+<script>
+
+	
+//Idea - fill svg bg with a color, have its size be representative of something
+// comparison between amount of wage theft per capita or something
+var svg = d3.select("svg").attr("width", "100%").attr("height", "100%");
+var rect = svg.node().getBoundingClientRect();
+var width = rect.width, height = rect.height;
+
+
+var g = svg.append("g");
+
+
+var scale = d3.scaleSqrt();
+var scaling_factor = 125;
+
+var tooltip = d3.select(".tooltip");
+
+
+
+var possible_groups = [
+		{col: "st_cd",label: "State"}, 
+		{col: "naics_code_description", label: "Industry"}
+		];
+
+var sum_cols = [
+		{col: "case_violtn_cnt", label: "Violation Count", type:"number", scale:125},
+		{col: "bw_atp_amt", label: "Total Back Wages Paid", type:"dollar", scale:10000},
+		{col: "ee_violtd_cnt", label: "Employees Violated", type:"number", scale:125},
+		{col: "flsa_violtn_cnt", label: "Number of FLSA Violations", type:"number", scale:125},
+		{col: "flsa_bw_atp_amt", label: "FLSA Back Wages Paid", type:"dollar", scale:10000},
+		{col: "sca_violtn_cnt", label: "Number of SCA Violations", type: "number", scale:125},
+		{col: "mspa_violtn_cnt", label: "Number of MSPA Violations", type:"number", scale:125},
+		{col: "fmla_violtn_cnt", label: "Number of FMLA Violations", type:"number", scale:125}
+		];
+
+// attempt at adding zoom functionality
+/*svg
+	.call(d3.zoom().on("zoom", function(){
+		//console.log(d3.event);
+		svg.attr("transform", "translate(" + d3.event.transform.x + "," + d3.event.transform.y +  ") scale(" + d3.event.transform.k + ")");
+		})
+	);*/
+
+
+function numberWithCommas(x) {
+    return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function format(number, type){
+	if (type == "dollar"){
+		number = number.toFixed(2);
+	}
+	var with_commas = numberWithCommas(number);
+	if (type == "dollar"){
+		return "$" + with_commas;
+	}
+	return with_commas;
+}
+
+Promise.all([d3.csv("summarized_WHD.csv")]).then(function (data) {
+		var summary = data[0];
+		
+		
+		function update(sum_obj, group_obj) {
+			var sum_column = sum_obj.col;
+			var group_by = group_obj.col;
+			var scaling_factor = sum_obj.scale;
+
+			
+			nest = d3.nest().key(d=>d[group_by]).rollup(g=> (d3.sum(g, d => Math.round(100*d[sum_column]))/100)).entries(summary);
+			console.log(nest);
+			
+			var len = nest.length;
+			
+			var color = d3.scaleLinear()
+				.domain([0, len-1])
+				.range(["purple", "orange"]);
+			
+			var data_join = g.selectAll("circle").data(nest, d => d.key);
+			
+			data_join
+				.transition()
+				.attr("r", d => scale(d.value/scaling_factor));
+			
+			
+			var entered = data_join
+				.enter()
+					.append("circle")
+					.attr("fill", (d, i) => color(i))
+					//.attr("cx", width/2)
+					//.attr("cy", height/2)
+					.attr("r", d => scale(d.value/scaling_factor))
+					//.text(d => d.key)
+					.on("mouseover", function(d) {
+						d3.select(".tooltip").html(d.key + "</br>" + format(d.value, sum_obj.type))
+							.transition()
+							.style("left", (d3.event.pageX) + "px")
+							.style("top", (d3.event.pageY) + "px")
+							.style("opacity", .95);
+						})
+					.on("mousemove", function(d) {
+						d3.select(".tooltip")
+							.style("left", (d3.event.pageX) + "px")
+							.style("top", (d3.event.pageY)+"px")
+							//.style("opacity", .95);
+						})
+					.on("mouseout", function(d) {
+						d3.select(".tooltip").transition()
+							.style("opacity", 0);
+						}
+					);
+			
+			data_join.exit().remove();
+			
+			var merged = entered.merge(data_join);
+			merged.on("mouseover", function(d) {
+					d3.select(".tooltip").html(d.key + "</br>" + format(d.value, sum_obj.type))
+						.transition()
+						.style("left", (d3.event.pageX) + "px")
+						.style("top", (d3.event.pageY) + "px")
+						.style("opacity", .95);
+					})
+			
+			var center_force = d3.forceCenter(width/2 + svg.x, height/2 + svg.y);
+			var collide_force = d3.forceCollide().radius(d => scale(d.value/scaling_factor));
+			
+			var force_simulation = d3.forceSimulation(nest)
+				.force("center", center_force)
+				.force("collide" , collide_force)
+				.on("tick", e => merged.attr("cx", d => d.x)
+					.attr("cy", d =>d.y));
+		}
+		
+		Vue.component("v-select", VueSelect.VueSelect);
+		
+		var vue = new Vue({
+			el:	"#app",
+			data:	{
+				group_options: possible_groups,
+				group_by: possible_groups[0],
+				column_options: sum_cols,
+				column: sum_cols[0],
+				width: width,
+				height: height
+			},
+			methods:	{
+				reload(val) {
+					//console.log(this.group_by);
+					//console.log(this.column);
+					if (val == null){
+						
+					}
+					else {
+						update(this.column, this.group_by);
+					}
+				}
+			},
+			computed:	{
+				amount: function(){
+					return format(Math.round((this.column.scale * this.width * this.height)/Math.PI), this.column.type);
+				}
+			},
+			created:	function(){
+				that = this;
+				window.addEventListener('resize', function(){
+					console.log('here');
+					rect = svg.node().getBoundingClientRect();
+					width = rect.width;
+					height = rect.height;
+					that.width = rect.width;
+					that.height = rect.height;
+					update(that.column, that.group_by);
+				}
+			);
+				
+			}
+
+			
+		});
+		// For some reason, d3 doesn't like these selections after Vue starts
+		// So we'll just do them again
+		tooltip = d3.select(".tooltip");
+		svg = d3.select("svg");
+		g = d3.select("g");
+		svg.x = 0;
+		svg.y = 0;
+		svg
+			.call(d3.drag()
+				.on('drag', function(d, i) {
+					console.log(d);
+					svg.x += d3.event.dx;
+					svg.y += d3.event.dy;
+					//svg.attr("transform", "translate(" + svg.x + "," + svg.y +  ")");
+					//update(vue.column, vue.group_by);
+				})
+				.on('end', function(d, i){
+					svg.attr("transform", "");
+					update(vue.column, vue.group_by);
+				})
+			);
+		
+	}
+);
+
+</script>
+</html>
